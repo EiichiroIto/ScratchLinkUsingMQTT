@@ -2,22 +2,24 @@ from websocket_server import WebsocketServer
 import json
 import base64
 import time
+import sys
 from threading import Timer
 from serial import Serial, SerialException
-
-without_sensor = False
+from serial.tools import list_ports
 
 class StackChan:
     def __init__(self):
         self.uart = None
+        self.port_name = None
     def is_connected(self):
         return self.uart != None
     def open(self):
+        print("Opening %s" % self.port_name)
         self.uart = None
         try:
-            self.uart = Serial("/dev/ttyUSB0", 115200)
+            self.uart = Serial(self.port_name, 115200)
         except SerialException:
-            print("can't open /dev/ttyUSB0")
+            print("can't open %s" % self.port_name)
         return self.is_connected()
     def _send(self, text):
         print(text)
@@ -48,7 +50,7 @@ class StackChan:
         except Exception as e:
             print(e)
             return None
-        if not (len(r)>0 and r[0] == 42):
+        if not (len(r)>0 and r[0] == 43):
             return None
         try:
             s = list(map(int,r[1:].decode('utf-8').split(',')))
@@ -91,6 +93,7 @@ class ScratchLink:
         response = '{"jsonrpc":"2.0","method":"didDiscoverPeripheral","params":{"name":"%s","rssi":%d,"peripheralId":%d}}' % (name, rssi, peripheralId)
         server.send_message(client, response)
 
+without_sensor = False
 stackchan = StackChan()
 scratchlink = ScratchLink()
 
@@ -150,9 +153,31 @@ def message_received(client, server, message):
         id = dict['id']
         scratchlink.result(server, client, id, True)
 
-PORT=20111
-server = WebsocketServer(port = PORT)
-server.set_fn_new_client(new_client)
-server.set_fn_client_left(client_left)
-server.set_fn_message_received(message_received)
-server.run_forever()
+def auto_select_port_name(port_name):
+    if port_name:
+        return port_name
+    port_names = [port.device for port in list_ports.comports()]
+    port_names.sort()
+    if len(port_names) == 0:
+        return None
+    elif len(port_names) == 1:
+        return port_names[0]
+    print("Available ports:")
+    for i in range(len(port_names)):
+        print(" %d --> %s" % (i,port_names[i]))
+    print("enter number >> ", end="")
+    num = int(input())
+    return port_names[num]
+
+if __name__ == "__main__":
+    port_name = auto_select_port_name(sys.argv[1] if len(sys.argv) >= 2 else None)
+    if not port_name:
+        print("No serial ports found")
+        exit()
+    stackchan.port_name = port_name
+    PORT=20111
+    server = WebsocketServer(port = PORT)
+    server.set_fn_new_client(new_client)
+    server.set_fn_client_left(client_left)
+    server.set_fn_message_received(message_received)
+    server.run_forever()
